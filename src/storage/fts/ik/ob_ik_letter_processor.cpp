@@ -97,6 +97,8 @@ int ObIKLetterProcessor::process_arabic_letter(TokenizeContext &ctx,
   int ret = OB_SUCCESS;
 
   bool is_connector = false;
+  UNUSED(ch);
+  UNUSED(char_len);
 
   if (-1 == arabic_start_) {
     if (ObFTCharUtil::CharType::ARABIC_LETTER == type) {
@@ -110,8 +112,7 @@ int ObIKLetterProcessor::process_arabic_letter(TokenizeContext &ctx,
     arabic_char_cnt_ += arabic_connect_cnt_;
     arabic_char_cnt_++;
     arabic_connect_cnt_ = 0;
-  } else if (OB_FAIL(
-                 ObFTCharUtil::check_num_connector(ctx.collation(), ch, char_len, is_connector))) {
+  } else if (FALSE_IT(is_connector = ObFTCharUtil::is_num_connector_code(ctx.current_code()))) {
   } else if (ObFTCharUtil::CharType::USELESS == type && is_connector) {
     // only if connector follows  and is followed by an arabic number we count it
     arabic_connect_cnt_++;
@@ -157,6 +158,8 @@ int ObIKLetterProcessor::process_mix_letter(TokenizeContext &ctx,
 
   bool is_mix_char = (ObFTCharUtil::CharType::ARABIC_LETTER == type
                       || ObFTCharUtil::CharType::ENGLISH_LETTER == type);
+  UNUSED(ch);
+  UNUSED(char_len);
   if (mix_start_ == -1) {
     if (is_mix_char) {
       mix_start_ = ctx.get_cursor();
@@ -168,10 +171,7 @@ int ObIKLetterProcessor::process_mix_letter(TokenizeContext &ctx,
     if (is_mix_char) {
       mix_end_ = ctx.get_end_cursor();
       this->mix_char_cnt_++;
-    } else if (OB_FAIL(ObFTCharUtil::check_letter_connector(ctx.collation(),
-                                                            ch,
-                                                            char_len,
-                                                            is_connector))) {
+    } else if (FALSE_IT(is_connector = ObFTCharUtil::is_letter_connector_code(ctx.current_code()))) {
     } else if (ObFTCharUtil::CharType::USELESS == type && is_connector) {
       this->mix_end_ = ctx.get_end_cursor();
       this->mix_char_cnt_++;

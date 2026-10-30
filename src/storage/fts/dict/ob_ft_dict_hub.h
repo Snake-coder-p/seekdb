@@ -17,8 +17,11 @@
 #ifndef _OCEANBASE_STORAGE_FTS_DICT_OB_FT_DICT_HUB_H_
 #define _OCEANBASE_STORAGE_FTS_DICT_OB_FT_DICT_HUB_H_
 
+#include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
 #include "lib/lock/ob_bucket_lock.h"
+#include "lib/lock/ob_lock_guard.h"
+#include "lib/lock/ob_spin_lock.h"
 #include "storage/fts/dict/ob_ft_dict_def.h"
 
 namespace oceanbase
@@ -93,10 +96,23 @@ private:
 };
 
 class ObFTCacheRangeContainer;
+class ObIFTDict;
 class ObFTDictHub
 {
 public:
-  ObFTDictHub() : is_inited_(false), dict_map_(), rw_dict_lock_() {}
+  // Number of dictionary types the hub keeps process-wide: the main IK
+  // dictionary and the quantifier dictionary. The stopword dictionary is not
+  // used by the IK tokenizer (stopword filtering goes through the global
+  // ObStopWordChecker), so it is not pinned here.
+  static constexpr int64_t SHARED_DICT_CNT = 2;
+
+public:
+  ObFTDictHub()
+      : is_inited_(false), dict_map_(), rw_dict_lock_(),
+        shared_alloc_("FTDictHub"),
+        shared_lock_(), shared_dicts_(), shared_ranges_()
+  {
+  }
   ~ObFTDictHub() {}
 
   int init();
@@ -107,17 +123,29 @@ public:
 
   int load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container);
 
+  // Return a process-wide, immutable dictionary for `desc`. The dictionary and
+  // its cache handles stay valid until the hub is destroyed, so parsers can
+  // share it instead of reloading every range from the KV cache per document.
+  int get_shared_dict(const ObFTDictDesc &desc, const ObIFTDict *&dict);
+
 private:
   int get_dict_info(const ObFTDictInfoKey &key, ObFTDictInfo &info);
 
   int put_dict_info(const ObFTDictInfoKey &key, const ObFTDictInfo &info);
 
+  int shared_dict_slot(const ObFTDictDesc &desc, int64_t &slot) const;
 
 private:
   bool is_inited_;
   // holds info of dict
   hash::ObHashMap<ObFTDictInfoKey, ObFTDictInfo> dict_map_;
   ObBucketLock rw_dict_lock_;
+  // Owns the shared dictionaries and their range containers. Both live for the
+  // whole process because the dictionary tables are immutable here.
+  common::ObArenaAllocator shared_alloc_;
+  common::ObSpinLock shared_lock_;
+  const ObIFTDict *shared_dicts_[SHARED_DICT_CNT];
+  ObFTCacheRangeContainer *shared_ranges_[SHARED_DICT_CNT];
 };
 
 } //  namespace storage

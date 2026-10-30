@@ -43,6 +43,14 @@ int ObFTDictHub::init()
 int ObFTDictHub::destroy()
 {
   int ret = OB_SUCCESS;
+  {
+    ObLockGuard<common::ObSpinLock> guard(shared_lock_);
+    for (int64_t i = 0; i < SHARED_DICT_CNT; ++i) {
+      shared_dicts_[i] = nullptr;
+      shared_ranges_[i] = nullptr;
+    }
+    shared_alloc_.reset();
+  }
   is_inited_ = false;
   return ret;
 }
@@ -114,6 +122,70 @@ int ObFTDictHub::load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &c
   return ret;
 }
 
+
+int ObFTDictHub::shared_dict_slot(const ObFTDictDesc &desc, int64_t &slot) const
+{
+  int ret = OB_SUCCESS;
+  switch (desc.type_) {
+  case ObFTDictType::DICT_IK_MAIN: {
+    slot = 0;
+  } break;
+  case ObFTDictType::DICT_IK_QUAN: {
+    slot = 1;
+  } break;
+  default: {
+    slot = -1;
+    ret = OB_NOT_SUPPORTED;
+  } break;
+  }
+  return ret;
+}
+
+int ObFTDictHub::get_shared_dict(const ObFTDictDesc &desc, const ObIFTDict *&dict)
+{
+  int ret = OB_SUCCESS;
+  int64_t slot = -1;
+  dict = nullptr;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_FAIL(shared_dict_slot(desc, slot))) {
+  } else {
+    ObLockGuard<common::ObSpinLock> guard(shared_lock_);
+    if (OB_NOT_NULL(shared_dicts_[slot])) {
+      dict = shared_dicts_[slot];
+    } else {
+      ObFTCacheRangeContainer *container = nullptr;
+      ObFTRangeDict *range_dict = nullptr;
+      if (OB_ISNULL(container = OB_NEWx(ObFTCacheRangeContainer, &shared_alloc_, shared_alloc_))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+        STORAGE_FTS_LOG(WARN, "Failed to allocate dict range container", K(ret));
+      } else if (OB_FAIL(load_cache(desc, *container))) {
+        // The range blocks are not cached yet; build them once and keep them.
+        if (OB_ENTRY_NOT_EXIST != ret) {
+          STORAGE_FTS_LOG(WARN, "Failed to load dict cache", K(ret));
+        } else if (OB_FAIL(build_cache(desc, *container))) {
+          STORAGE_FTS_LOG(WARN, "Failed to build dict cache", K(ret));
+        }
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_UNLIKELY(container->get_handles().empty())) {
+        ret = OB_ERR_UNEXPECTED;
+        STORAGE_FTS_LOG(WARN, "Empty dict cache container", K(ret));
+      } else if (OB_ISNULL(range_dict = OB_NEWx(ObFTRangeDict, &shared_alloc_, shared_alloc_,
+                                                container, desc))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+        STORAGE_FTS_LOG(WARN, "Failed to allocate shared range dict", K(ret));
+      } else if (OB_FAIL(range_dict->init())) {
+        STORAGE_FTS_LOG(WARN, "Failed to init shared range dict", K(ret));
+      } else {
+        shared_ranges_[slot] = container;
+        shared_dicts_[slot] = range_dict;
+        dict = range_dict;
+      }
+    }
+  }
+  return ret;
+}
 
 int ObFTDictHub::get_dict_info(const ObFTDictInfoKey &key, ObFTDictInfo &info)
 {

@@ -47,18 +47,33 @@ public:
 
   int current_char(const char *&ch, uint8_t &char_len);
   int current_char_type(ObFTCharUtil::CharType &type);
+  // Fetch the current character bytes and its cached classification in one call.
+  // Every per-character processor needs both, so this avoids repeated lookups.
+  OB_INLINE int current_char_and_type(const char *&ch, uint8_t &char_len,
+                                      ObFTCharUtil::CharType &type)
+  {
+    int ret = OB_SUCCESS;
+    if (OB_UNLIKELY(cursor_ >= fulltext_len_)) {
+      ret = OB_ITER_END;
+    } else {
+      ch = fulltext_ + cursor_;
+      char_len = next_char_len_;
+      type = next_char_type_;
+    }
+    return ret;
+  }
 
   int step_next();
 
-  ObCollationType collation() const;
-  int64_t get_end_cursor() const;
-  const char *fulltext() const;
-  int64_t fulltext_len() const;
-  int64_t get_cursor() const;
+  OB_INLINE ObCollationType collation() const { return coll_type_; }
+  OB_INLINE int64_t get_end_cursor() const { return cursor_ + next_char_len_; }
+  OB_INLINE const char *fulltext() const { return fulltext_; }
+  OB_INLINE int64_t fulltext_len() const { return fulltext_len_; }
+  OB_INLINE int64_t get_cursor() const { return cursor_; }
 
-  bool is_last() const;
-  bool iter_end() const;
-  bool is_smart() const;
+  OB_INLINE bool is_last() const { return cursor_ + next_char_len_ >= fulltext_len_; }
+  OB_INLINE bool iter_end() const { return cursor_ >= fulltext_len_; }
+  OB_INLINE bool is_smart() const { return is_smart_; }
 
   int add_chain(ObIKTokenChain *chain);
   int add_token(const char *fulltext,
@@ -73,6 +88,9 @@ public:
 
   int32_t handle_size() const { return handle_size_; }
 
+  // Code point of the current character, decoded once in prepare_next_char().
+  OB_INLINE ob_wc_t current_code() const { return next_char_code_; }
+
 private:
   int prepare_next_char();
 
@@ -83,6 +101,7 @@ private:
   int64_t cursor_;
   int64_t next_char_len_;
   ObFTCharUtil::CharType next_char_type_;
+  ob_wc_t next_char_code_;
 
   uint32_t handle_size_;
   bool is_smart_;
@@ -101,7 +120,12 @@ public:
 
   virtual ~ObIIKProcessor() {}
 
-  int process(TokenizeContext &ctx);
+  // The current character bytes and classification are resolved once by the
+  // parser loop and passed in, so each processor does not refetch them.
+  int process(TokenizeContext &ctx,
+              const char *ch,
+              const uint8_t char_len,
+              const ObFTCharUtil::CharType type);
 
   virtual int do_process(TokenizeContext &ctx,
                          const char *ch,

@@ -52,6 +52,48 @@ public:
                                  const uint8_t char_len,
                                  CharType &type);
 
+  // Decode the current character once so classification and the auxiliary
+  // checks below can reuse the same code point instead of decoding again.
+  static int decode_char(ObCollationType coll_type,
+                         const char *input,
+                         const uint8_t char_len,
+                         ob_wc_t &unicode);
+
+  // Classify an already decoded code point. Same order and result as
+  // classify_first_char, which must stay the reference implementation.
+  OB_INLINE static void classify_code(ob_wc_t unicode, CharType &type)
+  {
+    type = CharType::USELESS;
+    if (ObUnicodeBlockUtils::is_alpha(unicode)) {
+      type = CharType::ENGLISH_LETTER;
+    } else if (ObUnicodeBlockUtils::is_arabic(unicode)) {
+      type = CharType::ARABIC_LETTER;
+    } else if (ObUnicodeBlockUtils::is_chinese(unicode)) {
+      type = CharType::CHINESE;
+    } else if (ObUnicodeBlockUtils::is_other_cjk(unicode)) {
+      type = CharType::OTHER_CJK;
+    } else if (ObUnicodeBlockUtils::check_high_surrogate(unicode)) {
+      type = CharType::SURROGATE_HIGH;
+    } else if (ObUnicodeBlockUtils::check_low_surrogate(unicode)) {
+      type = CharType::SURROGATE_LOW;
+    }
+  }
+
+  OB_INLINE static bool is_cn_number_code(ob_wc_t unicode)
+  {
+    return ObUnicodeBlockUtils::is_unicode_cn_number(unicode);
+  }
+
+  OB_INLINE static bool is_num_connector_code(ob_wc_t unicode)
+  {
+    return ObUnicodeBlockUtils::check_num_connector(unicode);
+  }
+
+  OB_INLINE static bool is_letter_connector_code(ob_wc_t unicode)
+  {
+    return ObUnicodeBlockUtils::check_letter_connector(unicode);
+  }
+
   static int check_cn_number(ObCollationType coll_type,
                              const char *input,
                              const uint8_t char_len,
@@ -357,6 +399,35 @@ ObFTCharUtil::is_num_connector(const char *input, const uint8_t char_len, bool &
 // Support GBK
 
 // Implementation of some frame;
+
+inline int ObFTCharUtil::decode_char(ObCollationType coll_type,
+                                     const char *input,
+                                     const uint8_t char_len,
+                                     ob_wc_t &unicode)
+{
+  int ret = OB_SUCCESS;
+  ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
+
+  switch (cs_type) {
+  case CHARSET_UTF8MB4: {
+    ret = ObFTCharUtil::decode_unicode<CHARSET_UTF8MB4>(input, char_len, unicode);
+    break;
+  }
+  case CHARSET_UTF16: {
+    ret = ObFTCharUtil::decode_unicode<CHARSET_UTF16>(input, char_len, unicode);
+    break;
+  }
+  case CHARSET_UTF16LE: {
+    ret = ObFTCharUtil::decode_unicode<CHARSET_UTF16LE>(input, char_len, unicode);
+    break;
+  }
+  default:
+    ret = OB_NOT_SUPPORTED;
+    STORAGE_FTS_LOG(WARN, "Not supported charset type", K(ret), K(cs_type));
+    break;
+  }
+  return ret;
+}
 
 inline int ObFTCharUtil::check_cn_number(ObCollationType coll_type,
                                          const char *input,
